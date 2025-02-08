@@ -1,17 +1,17 @@
 // health-privacy.ts
-import { JsonRpcProvider, RawSigner, TransactionBlock } from '@mysten/sui.js';
+import { JsonRpcProvider, RawSigner, TransactionBlock } from '@mysten/sui';
 import { groth16 } from 'snarkjs';
 import { buildPoseidon } from 'circomlibjs';
 
 export class HealthPrivacySystem {
-    private provider: JsonRpcProvider;
-    private signer: RawSigner;
+    private provider: InstanceType<typeof JsonRpcProvider>;
+    private signer: InstanceType<typeof RawSigner>;
     private packageId: string;
     private poseidon: any;
 
     constructor(
-        provider: JsonRpcProvider,
-        signer: RawSigner,
+        provider: InstanceType<typeof JsonRpcProvider>,
+        signer: InstanceType<typeof RawSigner>,
         packageId: string
     ) {
         this.provider = provider;
@@ -65,7 +65,7 @@ export class HealthPrivacySystem {
                 tx.object(profileId),
                 tx.pure(viewer),
                 tx.pure(parameterIndex),
-                tx.pure(Array.from(proof)),
+                tx.pure([proof.pi_a, proof.pi_b, proof.pi_c].flat()),
                 tx.pure(expiration || null)
             ]
         });
