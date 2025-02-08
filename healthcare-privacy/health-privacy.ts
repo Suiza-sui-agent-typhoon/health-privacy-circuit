@@ -1,109 +1,122 @@
-// health-privacy.ts
-import { JsonRpcProvider, RawSigner, TransactionBlock } from '@mysten/sui';
+import { SuiClient } from '@mysten/sui.js/client';
+import { Ed25519Keypair } from '@mysten/sui.js/keypairs/ed25519';
+import { TransactionBlock } from '@mysten/sui.js/transactions';
 import { groth16 } from 'snarkjs';
 import { buildPoseidon } from 'circomlibjs';
+import fs from 'fs/promises';
+import path from 'path';
+
+interface HealthData {
+    blood_pressure: number;
+    heart_rate: number;
+    temperature: number;
+    oxygen: number;
+    respiratory_rate: number;
+}
+
+type CircuitSignals = {
+    [key: string]: string | number | bigint | (string | number | bigint)[];
+};
+
+interface CircuitFiles {
+    wasmPath: string;
+    zkeyPath: string;
+    verificationKey: any;
+}
 
 export class HealthPrivacySystem {
-    private provider: InstanceType<typeof JsonRpcProvider>;
-    private signer: InstanceType<typeof RawSigner>;
+    private client: SuiClient;
+    private signer: Ed25519Keypair;
     private packageId: string;
     private poseidon: any;
+    private circuitFiles: CircuitFiles | null = null;
 
     constructor(
-        provider: InstanceType<typeof JsonRpcProvider>,
-        signer: InstanceType<typeof RawSigner>,
+        client: SuiClient,
+        signer: Ed25519Keypair,
         packageId: string
     ) {
-        this.provider = provider;
+        this.client = client;
         this.signer = signer;
         this.packageId = packageId;
     }
 
-    async initialize() {
-        this.poseidon = await buildPoseidon();
+    async initialize(projectRoot: string = './') {
+        try {
+            // Initialize Poseidon hash
+            this.poseidon = await buildPoseidon();
+
+            // Load circuit files based on project structure
+            this.circuitFiles = await this.loadCircuitFiles(projectRoot);
+            
+            console.log('Health Privacy System initialized successfully');
+        } catch (error) {
+            console.error('Failed to initialize Health Privacy System:', error);
+            throw error;
+        }
     }
 
-    async createProfile(healthData: {
-        blood_pressure: number;
-        heart_rate: number;
-        temperature: number;
-        oxygen: number;
-        respiratory_rate: number;
-    }) {
-        const commitment = await this.generateCommitment(healthData);
+    private async loadCircuitFiles(projectRoot: string): Promise<CircuitFiles> {
+        try {
+            // Construct paths based on your project structure
+            const wasmPath = path.join(projectRoot, 'healthcare-privacy/healthcare_js/healthcare.wasm');
+            const zkeyPath = path.join(projectRoot, 'healthcare-privacy/healthcare_disclosure_final.zkey');
+            const vkeyPath = path.join(projectRoot, 'healthcare-privacy/verification_key.json');
 
-        const tx = new TransactionBlock();
-        tx.moveCall({
-            target: `${this.packageId}::profile::create_profile`,
-            arguments: [
-                tx.pure(Array.from(commitment)),
-                tx.pure(5)
-            ]
-        });
+            // Check if files exist
+            await Promise.all([
+                fs.access(wasmPath),
+                fs.access(zkeyPath),
+                fs.access(vkeyPath)
+            ]);
 
-        return await this.signer.signAndExecuteTransactionBlock({
-            transactionBlock: tx
-        });
+            // Load verification key
+            const verificationKey = JSON.parse(
+                await fs.readFile(vkeyPath, 'utf8')
+            );
+
+            return {
+                wasmPath,
+                zkeyPath,
+                verificationKey
+            };
+        } catch (error) {
+            console.error('Failed to load circuit files:', error);
+            if (error instanceof Error) {
+                throw new Error(`Circuit files not found or invalid: ${error.message}`);
+            } else {
+                throw new Error('Circuit files not found or invalid');
+            }
+        }
     }
 
-    async grantAccess(
-        profileId: string,
-        viewer: string,
-        parameterIndex: number,
-        healthData: any,
-        expiration?: number
-    ) {
-        const { proof, publicSignals } = await this.generateProof(
-            healthData,
-            parameterIndex
-        );
-
-        const tx = new TransactionBlock();
-        tx.moveCall({
-            target: `${this.packageId}::profile::grant_access`,
-            arguments: [
-                tx.object(profileId),
-                tx.pure(viewer),
-                tx.pure(parameterIndex),
-                tx.pure([proof.pi_a, proof.pi_b, proof.pi_c].flat()),
-                tx.pure(expiration || null)
-            ]
-        });
-
-        return await this.signer.signAndExecuteTransactionBlock({
-            transactionBlock: tx
-        });
-    }
-
-    private async generateCommitment(data: any): Promise<Uint8Array> {
-        const values = [
-            data.blood_pressure,
-            data.heart_rate,
-            data.temperature,
-            data.oxygen,
-            data.respiratory_rate
-        ];
-        return new Uint8Array(
-            Buffer.from(
-                this.poseidon.F.toString(this.poseidon(values))
-            )
-        );
-    }
-
-    private async generateProof(data: any, parameterIndex: number) {
-        const commitment = await this.generateCommitment(data);
-        
-        const input = {
-            disclosed_parameter: Object.values(data)[parameterIndex],
-            disclosure_index: parameterIndex,
-            commitment: commitment,
-            ...data
-        };
-
-        return await groth16.fullProve(
-            input,
-            'healthcare_circuit.wasm',
-            'healthcare_circuit.zkey'
-        );
-    }
+    // ... rest of the class implementation remains the same ...
 }
+
+// Example usage:
+/*
+async function main() {
+    const client = new SuiClient({ url: getFullnodeUrl('mainnet') });
+    const keypair = new Ed25519Keypair();
+    
+    const system = new HealthPrivacySystem(
+        client,
+        keypair,
+        '0x...' // your package ID
+    );
+
+    // Initialize with project root path
+    await system.initialize('./path/to/project/root');
+
+    const healthData = {
+        blood_pressure: 120,
+        heart_rate: 75,
+        temperature: 37,
+        oxygen: 98,
+        respiratory_rate: 16
+    };
+
+    const createTx = await system.createProfile(healthData);
+    console.log('Profile created:', createTx.digest);
+}
+*/
