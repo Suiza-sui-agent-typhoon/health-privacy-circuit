@@ -1,5 +1,14 @@
+/*
+/// Module: suiza_final2
+module suiza_final2::suiza_final2;
+*/
+
+// For Move coding conventions, see
+// https://docs.sui.io/concepts/sui-move-concepts/conventions
+
+
 // sources/health_privacy.move
-module health_privacy::profile{
+module suiza::health{
     use sui::object::{Self, ID, UID};
     use sui::transfer;
     use sui::tx_context::{Self, TxContext};
@@ -7,6 +16,8 @@ module health_privacy::profile{
     use sui::table::{Self, Table};
     use std::vector;
     use std::option::{Self, Option};
+    use sui::groth16;
+    use sui::clock::{Self, Clock};
 
     // Error constants
     const EInvalidProof: u64 = 0;
@@ -25,7 +36,7 @@ module health_privacy::profile{
         access_table: Table<address, AccessConfig>,
         is_active: bool,
         created_at: u64,
-        updated_at: Option<u64>
+        updated_at: u64
     }
 
     public struct AccessConfig has store {
@@ -63,15 +74,16 @@ module health_privacy::profile{
         timestamp: u64
     }
 
-    public entry fun create_profile(
+    public entry fun create_health_profile(
         commitment: vector<u8>,
         parameters_count: u8,
-        ctx: &mut TxContext
+        clock: &Clock,
+        ctx: &mut TxContext,
     ) {
         assert!(parameters_count <= MAX_PARAMETERS, EInvalidParameter);
         
         let sender = tx_context::sender(ctx);
-        let timestamp = tx_context::epoch(ctx);
+        let timestamp = clock::timestamp_ms(clock);
         
         let profile = HealthProfile {
             id: object::new(ctx),
@@ -81,7 +93,7 @@ module health_privacy::profile{
             access_table: table::new(ctx),
             is_active: true,
             created_at: timestamp,
-            updated_at: option::none()
+            updated_at: timestamp
         };
 
         event::emit(ProfileCreated {
@@ -99,13 +111,14 @@ module health_privacy::profile{
         parameter_index: u8,
         proof: vector<u8>,
         expiration: Option<u64>,
+        clock: &Clock,
         ctx: &mut TxContext
     ) {
         assert!(tx_context::sender(ctx) == profile.owner, EUnauthorized);
         assert!(parameter_index < profile.parameters_count, EInvalidParameter);
         assert!(!vector::is_empty(&proof), EInvalidProof);
 
-        let timestamp = tx_context::epoch(ctx);
+        let timestamp = clock::timestamp_ms(clock);
 
         let access_config = if (table::contains(&profile.access_table, viewer)) {
             let mut config = table::remove(&mut profile.access_table, viewer);
@@ -164,4 +177,28 @@ module health_privacy::profile{
 
         parameter
     }
+
+    
+    /// Dynamically verifies a Groth16 proof using BN254.
+///
+/// # Arguments
+/// * `verifying_key_bytes` - The verifying key in bytes.
+/// * `proof_points_bytes` - The proof points in bytes.
+/// * `public_inputs_bytes` - The public inputs in bytes.
+///
+/// # Returns
+/// * `bool` - Returns `true` if verification succeeds, otherwise `false`.
+public fun groth16_bn254_verify(
+    verifying_key_bytes: vector<u8>,
+    proof_points_bytes: vector<u8>,
+    public_inputs_bytes: vector<u8>
+) : bool {
+    let pvk = groth16::prepare_verifying_key(&groth16::bn254(), &verifying_key_bytes);
+    let proof_points = groth16::proof_points_from_bytes(proof_points_bytes);
+    let public_inputs = groth16::public_proof_inputs_from_bytes(public_inputs_bytes);
+    groth16::verify_groth16_proof(&groth16::bn254(), &pvk, &public_inputs, &proof_points)
+}
+
+
+
 }
