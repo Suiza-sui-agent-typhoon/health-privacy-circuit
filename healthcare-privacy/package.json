@@ -13,6 +13,7 @@
     "@mysten/dapp-kit": "0.14.46",
     "@mysten/sui": "^1.21.2",
     "@mysten/sui.js": "^0.54.1",
+    "bcs": "^0.0.0",
     "circomlib": "^2.0.5",
     "circomlibjs": "^0.1.7",
     "deno": "^2.1.9",

@@ -6,6 +6,8 @@ import { buildPoseidon } from 'circomlibjs';
 import path from 'path';
 import { getFaucetHost, requestSuiFromFaucetV0 } from '@mysten/sui/faucet';
 import fs from 'fs/promises';
+import { bcs } from '@mysten/sui/bcs';
+
 
 interface HealthData {
     blood_pressure: number;
@@ -161,8 +163,7 @@ class HealthPrivacySystem {
             target: `${this.packageId}::health::create_health_profile`,
             arguments: [
                 tx.pure(commitment),
-                tx.pure(8),
-                tx.object("0x6") 
+                tx.pure(5), // Number of health data parameters
             ]
         });
 
@@ -207,6 +208,10 @@ class HealthPrivacySystem {
     // console.log('Flattened proof:', flattenedProof);
     const proofData=JSON.stringify(proof)
         const tx = new TransactionBlock();
+       // Serialize the expiration as an Option<u64>
+    const  nullOption = bcs.option(bcs.string()).serialize(null).toBytes();
+    const parsedNullOption = bcs.option(bcs.string()).parse(nullOption);
+
         tx.moveCall({
             target: `${this.packageId}::health::grant_access`,
             arguments: [
@@ -214,7 +219,7 @@ class HealthPrivacySystem {
                 tx.pure(viewerAddress),
                 tx.pure(dataIndex),
                 tx.pure(proofData),
-                 tx.pure(expiration),// Passing `None` for expiration (Move's `Option<u64>`)
+                tx.pure(nullOption),// Passing `None` for expiration (Move's `Option<u64>`)
             ]
         });
 
@@ -238,7 +243,7 @@ async function main() {
         const system = new HealthPrivacySystem(
             client,
             keypair,
-            '0xc3f72e8cf6e069b729765df4c5b0463e8d88b23ea4940b5c933f30ac2991cea6' // your package ID
+            '0x3b9ba93b293870b831443b6435712f28a2bccf75cb37a6e316b69f5e48dce531' // your package ID
         );
         
         await system.initialize();
@@ -285,7 +290,9 @@ async function main() {
         );
         console.log('Access granted:', grantTx.digest);
 
+        
 
+   
 
     } catch (error) {
         console.error('\nExecution Error:', error);
