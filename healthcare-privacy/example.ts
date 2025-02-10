@@ -5,6 +5,7 @@ import { groth16 } from 'snarkjs';
 import { buildPoseidon } from 'circomlibjs';
 import path from 'path';
 import { getFaucetHost, requestSuiFromFaucetV0 } from '@mysten/sui/faucet';
+import fs from 'fs/promises';
 
 interface HealthData {
     blood_pressure: number;
@@ -12,6 +13,9 @@ interface HealthData {
     temperature: number;
     oxygen: number;
     respiratory_rate: number;
+    height: number;
+    weight: number;
+    age: number;
 }
 
 class HealthPrivacySystem {
@@ -26,101 +30,139 @@ class HealthPrivacySystem {
         this.client = client;
         this.signer = signer;
         this.packageId = packageId;
-        this.wasmFile = path.join(__dirname, 'healthcare_js/healthcare.wasm');
-        this.zkeyFile = path.join(__dirname, 'healthcare_disclosure_final.zkey');
+        this.wasmFile = path.resolve(__dirname, 'healthcare_js', 'healthcare.wasm');
+        this.zkeyFile = path.resolve(__dirname,'healthcare_disclosure_final.zkey');
     }
 
     async initialize() {
-        this.poseidon = await buildPoseidon();
+        try {
+            this.poseidon = await buildPoseidon();
+            // Verify circuit files exist using Node.js fs
+            await Promise.all([
+                fs.access(this.wasmFile),
+                fs.access(this.zkeyFile)
+            ]);
+        } catch (error) {
+            throw new Error(`Initialization failed: ${error}. Please ensure circuit files exist at ${this.wasmFile} and ${this.zkeyFile}`);
+        }
+    }
+
+    private validateHealthData(data: HealthData) {
+        const ranges = {
+            blood_pressure: { min: 60, max: 200 },
+            heart_rate: { min: 40, max: 200 },
+            temperature: { min: 35, max: 42 },
+            oxygen: { min: 70, max: 100 },
+            respiratory_rate: { min: 8, max: 30 }
+        };
+
+        // for (const [key, range] of Object.entries(ranges)) {
+        //     const value = data[key];
+        //     if (value < range.min || value > range.max) {
+        //         throw new Error(`${key} value ${value} is outside valid range ${range.min}-${range.max}`);
+        //     }
+        // }
     }
 
     private normalizeToField(value: number): string {
-        // Ensure values are positive and properly formatted for the circuit
-        const normalizedValue = Math.abs(Math.floor(value));
+        // Convert to positive integer, handling decimal places appropriately
+        const normalizedValue = Math.floor(Math.abs(value * 100));
         return normalizedValue.toString();
     }
 
     private async generateCommitment(data: HealthData): Promise<string> {
-        const values = [
-            data.blood_pressure,
-            data.heart_rate,
-            data.temperature,
-            data.oxygen,
-            data.respiratory_rate
-        ].map(v => this.poseidon.F.e(this.normalizeToField(v)));
+        try {
+            // Validate health data before processing
+            this.validateHealthData(data);
 
-        const hash = this.poseidon(values);
-        const commitment = this.poseidon.F.toString(hash);
-        
-        console.log('Normalized input values:', values.map(v => this.poseidon.F.toString(v)));
-        console.log('Generated commitment:', commitment);
-        
-        return commitment;
+            // Convert all values to field elements
+            const values = [
+                data.blood_pressure,
+                data.heart_rate,
+                data.temperature,
+                data.oxygen,
+                data.respiratory_rate,
+                data.height,
+                data.weight,
+                data.age
+            ].map(v => this.poseidon.F.e(this.normalizeToField(v)));
+
+            // Generate Poseidon hash
+            const hash = this.poseidon(values);
+            const commitment = this.poseidon.F.toString(hash);
+
+            console.log('Generated commitment:', commitment);
+            return commitment;
+        } catch (error) {
+            throw new Error(`Commitment generation failed: ${error}`);
+        }
     }
 
     private async generateProof(data: HealthData, parameterIndex: number) {
-        const commitment = await this.generateCommitment(data);
-        
-        // Create array of normalized values
-        const normalizedValues = [
-            data.blood_pressure,
-            data.heart_rate,
-            data.temperature,
-            data.oxygen,
-            data.respiratory_rate
-        ].map(v => this.normalizeToField(v));
-
-        // Debug: Log the values and selected index
-        console.log('\nDebug Information:');
-        console.log('Parameter Index:', parameterIndex);
-        console.log('All Values:', normalizedValues);
-        console.log('Selected Value:', normalizedValues[parameterIndex]);
-        
-        const input = {
-            disclosed_parameter: normalizedValues[parameterIndex],
-            disclosure_index: parameterIndex,
-            commitment: commitment,
-            blood_pressure: normalizedValues[0],
-            heart_rate: normalizedValues[1],
-            temperature: normalizedValues[2],
-            oxygen: normalizedValues[3],
-            respiratory_rate: normalizedValues[4]
-        };
-
-        // Debug: Log the complete input
-        console.log('\nCircuit Input:');
-        console.log(JSON.stringify(input, null, 2));
+        if (parameterIndex < 0 || parameterIndex > 4) {
+            throw new Error('Invalid parameter index');
+        }
 
         try {
+            const commitment = await this.generateCommitment(data);
+            
+            // Prepare normalized values
+            const normalizedValues = [
+                data.blood_pressure,
+                data.heart_rate,
+                data.temperature,
+                data.oxygen,
+                data.respiratory_rate,
+                data.height,
+                data.weight,
+                data.age
+            ].map(v => this.normalizeToField(v));
+
+            // Create circuit input
+            const input = {
+                disclosed_parameter: normalizedValues[parameterIndex],
+                disclosure_index: parameterIndex,
+                commitment: commitment,
+                blood_pressure: normalizedValues[0],
+                heart_rate: normalizedValues[1],
+                temperature: normalizedValues[2],
+                oxygen: normalizedValues[3],
+                respiratory_rate: normalizedValues[4],
+                height: normalizedValues[5],
+                weight: normalizedValues[6],
+                age: normalizedValues[7]
+            };
+
+            console.log('\nGenerating proof with input:', JSON.stringify(input, null, 2));
+
+            // Generate zero-knowledge proof
             const result = await groth16.fullProve(
                 input,
                 this.wasmFile,
                 this.zkeyFile
             );
-            console.log('\nProof Generated Successfully');
+            console.log("proof generated",result)
+
             return result;
         } catch (error) {
-            console.error('\nProof Generation Error:');
-            console.error('Error details:', error);
-            
-            // Additional debug information
-            console.log('\nCircuit State:');
-            console.log('Disclosed Parameter:', input.disclosed_parameter);
-            console.log('Expected Parameter:', normalizedValues[parameterIndex]);
-            
+            console.error('Proof generation failed:', error);
             throw error;
         }
     }
 
     async createProfile(healthData: HealthData) {
         const commitment = await this.generateCommitment(healthData);
-        
+
+        console.log('\nCreating health profile with commitment:', commitment);
+       
+
         const tx = new TransactionBlock();
         tx.moveCall({
-            target: `${this.packageId}::profile::create_profile`,
+            target: `${this.packageId}::health::create_health_profile`,
             arguments: [
                 tx.pure(commitment),
-                tx.pure(5)
+                tx.pure(8),
+                tx.object("0x6") 
             ]
         });
 
@@ -138,22 +180,41 @@ class HealthPrivacySystem {
         profileId: string,
         viewerAddress: string,
         dataIndex: number,
-        healthData: HealthData
+        healthData: HealthData,
+        expiration: number | null = null
     ) {
         console.log('\nGenerating access proof...');
         console.log('Data Index:', dataIndex);
         console.log('Health Data:', healthData);
 
         const { proof, publicSignals } = await this.generateProof(healthData, dataIndex);
+        console.log('Proof:', proof);
+        console.log('Public Signals:', publicSignals);
+      //   const encodeBigIntToBytes = (bigIntStr: string): number[] => {
+      //     return Array.from(Buffer.from(BigInt(bigIntStr).toString(16), 'hex'));
+      // };
+    //   const flattenedProof = [
+    //     ...encodeBigIntToBytes(proof.pi_a[0]),
+    //     ...encodeBigIntToBytes(proof.pi_a[1]),
+    //     ...encodeBigIntToBytes(proof.pi_b[0][0]), // pi_b is nested
+    //     ...encodeBigIntToBytes(proof.pi_b[0][1]),
+    //     ...encodeBigIntToBytes(proof.pi_b[1][0]),
+    //     ...encodeBigIntToBytes(proof.pi_b[1][1]),
+    //     ...encodeBigIntToBytes(proof.pi_c[0]),
+    //     ...encodeBigIntToBytes(proof.pi_c[1])
+    // ];
 
+    // console.log('Flattened proof:', flattenedProof);
+    const proofData=JSON.stringify(proof)
         const tx = new TransactionBlock();
         tx.moveCall({
-            target: `${this.packageId}::profile::grant_access`,
+            target: `${this.packageId}::health::grant_access`,
             arguments: [
                 tx.object(profileId),
                 tx.pure(viewerAddress),
                 tx.pure(dataIndex),
-                tx.pure([proof.pi_a, proof.pi_b, proof.pi_c].flat())
+                tx.pure(proofData),
+                 tx.pure(expiration),// Passing `None` for expiration (Move's `Option<u64>`)
             ]
         });
 
@@ -170,42 +231,61 @@ class HealthPrivacySystem {
 
 async function main() {
     try {
+        // Initialize client and system
         const client = new SuiClient({ url: getFullnodeUrl('devnet') });
         const keypair = new Ed25519Keypair();
+        const keypair2= new Ed25519Keypair();
         const system = new HealthPrivacySystem(
             client,
             keypair,
-            '0x6092b9877722bbca9c8b6ff4980b182e7e45af81122ecb78fa62f65dc65ddc55'
+            '0xc3f72e8cf6e069b729765df4c5b0463e8d88b23ea4940b5c933f30ac2991cea6' // your package ID
         );
+        
         await system.initialize();
 
+        // Sample health data
         const healthData = {
             blood_pressure: 120,
             heart_rate: 75,
             temperature: 37,
             oxygen: 98,
-            respiratory_rate: 16
+            respiratory_rate: 16,
+           height: 180,
+            weight: 70,
+            age: 25
+
         };
 
+        // Request tokens from faucet
         await requestSuiFromFaucetV0({
             host: getFaucetHost('devnet'),
             recipient: keypair.getPublicKey().toSuiAddress(),
         });
+        await requestSuiFromFaucetV0({
+          host: getFaucetHost('devnet'),
+          recipient: keypair2.getPublicKey().toSuiAddress(),
+      });
 
+        // Create profile
         console.log('\nCreating profile...');
         const createTx = await system.createProfile(healthData);
         const createdObjects = createTx.effects?.created || [];
         const userProfileId = createdObjects[0].reference.objectId;
         console.log('Profile created:', userProfileId);
 
+        // Grant access to viewer
         console.log('\nTesting access grant...');
+        const viewerAddress = keypair2.getPublicKey().toSuiAddress();
         const grantTx = await system.grantAccess(
             userProfileId,
-            "0xe6bfa9b99ba5ab3cadaa268e11f0f3eecd7dd5359fb5ad0f26d83910207f3ead",
+            viewerAddress,
             1,  // heart rate index
-            healthData
+            healthData,
+             // 1 second expiration
         );
         console.log('Access granted:', grantTx.digest);
+
+
 
     } catch (error) {
         console.error('\nExecution Error:', error);
@@ -213,4 +293,6 @@ async function main() {
     }
 }
 
-main().catch(console.error);
+main();
+
+export { HealthPrivacySystem, HealthData };
