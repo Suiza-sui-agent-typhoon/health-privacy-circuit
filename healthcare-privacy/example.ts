@@ -243,7 +243,7 @@ async function main() {
         const system = new HealthPrivacySystem(
             client,
             keypair,
-            '0x3b9ba93b293870b831443b6435712f28a2bccf75cb37a6e316b69f5e48dce531' // your package ID
+            '0x1b74ebc0ca6ded62a85743b33056c3e6e3706534dee705976e8441caa85b017b' // your package ID
         );
         
         await system.initialize();
@@ -290,7 +290,7 @@ async function main() {
         );
         console.log('Access granted:', grantTx.digest);
 
-        
+
 
    
 
