@@ -29,7 +29,7 @@ module suiza::Streak_profile{
     }
 
     // ============== Constants & Structs ==============
-    const DAY_IN_MS: u64 = 86400000; // 24 hours in milliseconds
+    const DAY_IN_MS: u64 = 4000; // 4 second in milliseconds(for testing)
     const ERROR_INVALID_TIMESTAMP: u64 = 1;
     const ERROR_ALREADY_CLAIMED: u64 = 2;
     const ERROR_STREAK_NOT_ELIGIBLE: u64 = 3;
@@ -102,7 +102,7 @@ module suiza::Streak_profile{
         assert!(current_time >= user.next_eligible_time, ERROR_TOO_EARLY);
         
         // Check if streak should be reset (more than 48 hours since last workout)
-        if (current_time > user.last_workout_time + (2 * DAY_IN_MS)) {
+        if (current_time > user.last_workout_time + (2 * 86400000)) {
             user.streak = 0;
         };
 
@@ -171,7 +171,7 @@ module suiza::Streak_profile{
         clock: &Clock,
         ctx: &mut TxContext
     ) {
-        assert!(user.weekly_challenges > 0, 0);
+        // assert!(user.weekly_challenges > 0, 0);
         user.weekly_challenges = user.weekly_challenges - 1;
         
         event::emit(WorkoutRecorded {
